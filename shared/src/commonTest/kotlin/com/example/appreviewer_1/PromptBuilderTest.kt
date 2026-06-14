@@ -8,6 +8,7 @@ import com.example.appreviewer_1.domain.model.Severity
 import com.example.appreviewer_1.domain.model.SourceType
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PromptBuilderTest {
@@ -79,5 +80,39 @@ class PromptBuilderTest {
         val meta = AppMetadata(sourceType = SourceType.APK, sourceLabel = "x.apk")
         val prompt = PromptBuilder.build(meta, many)
         assertContains(prompt, "more lower-severity finding(s).")
+    }
+
+    // --- two-phase split ---
+
+    @Test
+    fun instructionIsStaticPersonaWithFormatContract() {
+        // Phase 1 holds no app data, so it's a constant carrying persona + format.
+        assertContains(PromptBuilder.instruction, "Google Play app reviewer")
+        assertTrue(PromptBuilder.instruction.lowercase().contains("plain prose only"))
+        assertTrue(PromptBuilder.instruction.lowercase().contains("no markdown"))
+    }
+
+    @Test
+    fun appContextCarriesRiskAndFactsButNotPersona() {
+        val meta = AppMetadata(
+            sourceType = SourceType.APK,
+            sourceLabel = "x.apk",
+            appName = "Demo",
+            trackers = listOf("Google AdMob"),
+        )
+        val context = PromptBuilder.appContext(meta, listOf(finding(Severity.CRITICAL)))
+        assertContains(context, "would be rejected")   // risk directive
+        assertContains(context, "Demo")                // app facts
+        assertContains(context, "Google AdMob")
+        // the persona lives only in phase 1, proving the split
+        assertTrue(!context.contains("Google Play app reviewer"))
+    }
+
+    @Test
+    fun buildJoinsInstructionAndContext() {
+        val meta = AppMetadata(sourceType = SourceType.APK, sourceLabel = "x.apk")
+        val findings = listOf(finding(Severity.HIGH))
+        val expected = "${PromptBuilder.instruction}\n\n${PromptBuilder.appContext(meta, findings)}"
+        assertEquals(expected, PromptBuilder.build(meta, findings))
     }
 }

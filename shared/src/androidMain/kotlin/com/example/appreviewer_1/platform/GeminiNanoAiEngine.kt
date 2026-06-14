@@ -11,6 +11,7 @@ import com.example.appreviewer_1.domain.model.Finding
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.PromptPrefix
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import kotlinx.coroutines.CoroutineScope
@@ -62,12 +63,14 @@ class GeminiNanoAiEngine(
                 else -> return fallback.generateInsight(metadata, findings)
             }
 
-            val prompt = PromptBuilder.build(metadata, findings)
+            // Phase 2 — the app-specific half. Phase 1 (PromptBuilder.instruction)
+            // is a constant, sent as the prompt prefix inside generate().
+            val context = PromptBuilder.appContext(metadata, findings)
 
             // First pass at low temperature; on a blank/garbled result, one stricter
             // retry; if that still fails, fall through to the rule-based engine.
-            val summary = generate(model, prompt, temperature = 0.3f)
-                ?: generate(model, "$prompt\n\n$STRICT_REMINDER", temperature = 0.1f)
+            val summary = generate(model, context, temperature = 0.3f)
+                ?: generate(model, "$context\n\n$STRICT_REMINDER", temperature = 0.1f)
 
             if (summary == null) {
                 fallback.generateInsight(metadata, findings)
@@ -85,10 +88,11 @@ class GeminiNanoAiEngine(
 
     private suspend fun generate(
         model: GenerativeModel,
-        prompt: String,
+        context: String,
         temperature: Float,
     ): String? {
-        val request = generateContentRequest(TextPart(prompt)) {
+        val request = generateContentRequest(TextPart(context)) {
+            promptPrefix = PromptPrefix(PromptBuilder.instruction)
             this.temperature = temperature
             topK = TOP_K
             maxOutputTokens = MAX_OUTPUT_TOKENS

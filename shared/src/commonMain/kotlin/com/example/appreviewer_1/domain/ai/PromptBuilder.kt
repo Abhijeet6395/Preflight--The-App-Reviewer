@@ -6,15 +6,23 @@ import com.example.appreviewer_1.domain.model.Severity
 import com.example.appreviewer_1.domain.model.SourceType
 
 /**
- * Builds the on-device LLM prompt from the concrete analysis result.
+ * Builds the on-device LLM prompt in two phases:
  *
- * Lives in commonMain so the prompt is one source of truth (any engine, any
- * platform) and can be unit-tested without a device. The "intelligence" is in
- * being SPECIFIC: it names the actual permissions, trackers, SDK gap and findings,
- * and adapts both the instruction and the focus to the app's risk profile —
- * instead of sending a fixed, generic template.
+ *  - [instruction] — phase 1: the static persona + output contract. It holds no
+ *    app data, so it's a constant prepared before any analysis runs and is sent
+ *    once as the request's prompt prefix (a natural fit for the model's
+ *    prefix/cached-context channel).
+ *  - [appContext] — phase 2: everything app-specific (a risk-tuned directive, the
+ *    fact sheet, and the concrete findings), built after analysis produces the
+ *    metadata and findings.
  *
- * Only the LLM path uses this; [RuleBasedAiEngine] composes its prose directly.
+ * Splitting them keeps the instruction stable and independently testable, and lets
+ * an engine cache/prefix it rather than re-sending it every call. [build] returns
+ * the two joined, for engines or tests that don't use a separate prefix channel.
+ *
+ * Lives in commonMain so the prompt is one source of truth and unit-testable
+ * without a device. Only the LLM path uses this; [RuleBasedAiEngine] composes its
+ * prose directly.
  */
 object PromptBuilder {
 
@@ -26,7 +34,15 @@ object PromptBuilder {
      *  small context window; the rest are summarized as a count. */
     private const val MAX_DETAILED_FINDINGS = 6
 
-    fun build(metadata: AppMetadata, findings: List<Finding>): String {
+    /** Phase 1 — static persona + output contract; no app data. */
+    val instruction: String =
+        "You are a senior Google Play app reviewer giving a developer a pre-submission " +
+            "verdict. Be specific to the app's findings below — reference the actual issues, " +
+            "not generic advice. Reply in 2-3 sentences of plain prose only: no markdown, no " +
+            "bullet lists, no headings."
+
+    /** Phase 2 — the risk-tuned directive plus everything specific to this app. */
+    fun appContext(metadata: AppMetadata, findings: List<Finding>): String {
         val actionable = findings
             .filter { it.severity != Severity.INFO }
             .sortedBy { it.severity.ordinal }
@@ -34,7 +50,7 @@ object PromptBuilder {
         val high = actionable.count { it.severity == Severity.HIGH }
 
         return buildString {
-            appendLine(instruction(critical, high, actionable.size))
+            appendLine(ask(critical, high, actionable.size))
             appendLine()
             appendLine("APP UNDER REVIEW")
             appendLine(factSheet(metadata))
@@ -44,25 +60,24 @@ object PromptBuilder {
         }
     }
 
-    /** The persona + ask, tuned to how much trouble the app is actually in. */
-    private fun instruction(critical: Int, high: Int, actionable: Int): String {
-        val ask = when {
-            critical > 0 ->
-                "This app would be rejected. In 2-3 sentences tell the developer plainly that " +
-                    "it is not ready, name the single most important blocker, and what to fix first."
-            high > 0 ->
-                "This app is close but risky. In 2-3 sentences give a clear go/no-go, call out " +
-                    "the highest-impact issue, and what to fix before submitting."
-            actionable > 0 ->
-                "This app looks submission-ready. In 2-3 sentences confirm it, then note the " +
-                    "single most worthwhile polish item."
-            else ->
-                "This app passed every static check. In 2-3 sentences give a confident go and " +
-                    "one sensible pre-launch reminder."
-        }
-        return "You are a senior Google Play app reviewer giving a developer a pre-submission " +
-            "verdict. $ask Be specific to THIS app's findings below — reference the actual " +
-            "issues, not generic advice. Plain prose only: no markdown, no bullet lists, no headings."
+    /** The full single-string prompt (phase 1 + phase 2). */
+    fun build(metadata: AppMetadata, findings: List<Finding>): String =
+        "$instruction\n\n${appContext(metadata, findings)}"
+
+    /** The directive, tuned to how much trouble the app is actually in. */
+    private fun ask(critical: Int, high: Int, actionable: Int): String = when {
+        critical > 0 ->
+            "This app would be rejected. In 2-3 sentences tell the developer plainly that it " +
+                "is not ready, name the single most important blocker, and what to fix first."
+        high > 0 ->
+            "This app is close but risky. In 2-3 sentences give a clear go/no-go, call out the " +
+                "highest-impact issue, and what to fix before submitting."
+        actionable > 0 ->
+            "This app looks submission-ready. In 2-3 sentences confirm it, then note the single " +
+                "most worthwhile polish item."
+        else ->
+            "This app passed every static check. In 2-3 sentences give a confident go and one " +
+                "sensible pre-launch reminder."
     }
 
     private fun factSheet(m: AppMetadata): String = buildList {

@@ -70,11 +70,11 @@ Even when Nano runs, it **only writes the prose summary**. The "Fix first" list
 the rules rank the fixes, the LLM just narrates. So today Nano controls exactly one thing:
 the 2–3 sentence verdict text.
 
-### The current prompt
-`buildPrompt()` is a fixed template: a "Google Play reviewer" persona, the app name,
-the *count* of permissions, tracker names, and finding *titles* by severity. It does not
-yet use the specific permission names, the worst risk category, the target-SDK gap, or the
-concrete finding details — so the output reads generic.
+### The prompt
+The prompt is produced by the shared `PromptBuilder` (commonMain) in two phases — a
+static persona/format **instruction** (phase 1, sent as the prompt prefix) and an
+app-specific **appContext** (phase 2: risk-tuned directive, fact sheet with the actual
+permissions/trackers/SDK-gap, and each finding's detail + fix). See "Seam 1" below.
 
 ---
 
@@ -91,16 +91,20 @@ concrete finding details — so the output reads generic.
 
 There are three seams, all around the single `generateContent` call:
 
-### Seam 1 — Pre-Nano: shape the prompt *(the big lever)*
-`buildPrompt()` is the single chokepoint before the model runs. Promote it to a shared
-`PromptBuilder` in `commonMain` and make it app-aware:
-- name the *specific* Play-sensitive permissions (SMS, call log, `QUERY_ALL_PACKAGES`, …)
-- call out the worst risk **category** and the **target-SDK gap**
-- include exported-component exposure and concrete finding details (not just titles)
-- switch the **instruction** by risk profile (critical → "explain the rejection + the one
-  fix that matters"; clean → "give a confident go")
-- optionally add **few-shot examples** and a strict **output format**
+### Seam 1 — Pre-Nano: shape the prompt *(the big lever)* — IMPLEMENTED
+The prompt is built by a shared, testable `PromptBuilder` in `commonMain`, in **two
+phases**:
+- **Phase 1 — `PromptBuilder.instruction`**: a static persona + output contract
+  (no app data), a constant prepared before any analysis runs. The Nano engine sends
+  it as the request's **`PromptPrefix`**, so it stays stable and can be cached/prefixed
+  rather than re-sent inline every call.
+- **Phase 2 — `PromptBuilder.appContext(metadata, findings)`**: everything specific to
+  this app — a risk-tuned directive plus a fact sheet that names the *specific*
+  Play-sensitive permissions, the **target-SDK gap**, exported-component exposure,
+  risky flags, trackers, and each finding's concrete `detail` + `recommendation`
+  (not just titles).
 
+`PromptBuilder.build()` joins both halves for tests / engines without a prefix channel.
 This is the cleanest place to "take control before Nano takes over."
 
 ### Seam 2 — The Nano call config: generation parameters
