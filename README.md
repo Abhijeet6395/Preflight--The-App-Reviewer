@@ -9,6 +9,16 @@ accessibility gaps — then has **Gemini Nano** write you a reviewer-style verdi
 
 No server. No API keys. No code ever leaves your device. **Total running cost: $0.**
 
+<p align="center">
+  <img src="docs/media/preflight_demo.gif" alt="Preflight demo — home screen to on-device audit report" width="300">
+</p>
+
+## Screenshots
+
+| Home | Analyzing | Report | Privacy |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/media/home.png" width="180"> | <img src="docs/media/analyzing.png" width="180"> | <img src="docs/media/report.png" width="180"> | <img src="docs/media/privacy.png" width="180"> |
+
 ## Why "Preflight"?
 
 Pilots never take off without a **preflight check** — a disciplined walk around the
@@ -114,6 +124,8 @@ Nano are Android-only; iOS gets GitHub mode and the sample audit.)
 - GitHub mode talks only to public, unauthenticated GitHub endpoints.
 - Scan history lives in app-private storage on your device.
 - The app has exactly one permission: `INTERNET` (for GitHub mode).
+
+See the full [privacy policy](./PRIVACY.md) — and since the app is open source, you can verify every claim in the code.
 
 ## Roadmap
 
