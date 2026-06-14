@@ -18,6 +18,8 @@ import com.example.appreviewer_1.domain.model.SourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.zip.ZipFile
 
 /** Application context for non-composable platform calls. Set once at startup. */
@@ -38,11 +40,18 @@ actual suspend fun inspectApk(apk: PickedApk): AppMetadata = withContext(Dispatc
     val context = AppReviewerRuntime.appContext
 
     // PackageManager can only parse APKs from a real file path, so stage the
-    // content URI into cache first.
+    // content URI into cache first. A user can hand us any file, so the copy is
+    // size-capped: an "APK" larger than this isn't a real app, and staging it
+    // would just fill the cache.
     val apkFile = File(context.cacheDir, "inspect.apk")
-    context.contentResolver.openInputStream(Uri.parse(apk.ref))?.use { input ->
-        apkFile.outputStream().use { input.copyTo(it) }
-    } ?: throw IllegalStateException("Couldn't read the selected file")
+    try {
+        context.contentResolver.openInputStream(Uri.parse(apk.ref))?.use { input ->
+            apkFile.outputStream().use { output -> input.copyUpTo(output, MAX_APK_BYTES) }
+        } ?: throw IllegalStateException("Couldn't read the selected file")
+    } catch (e: Exception) {
+        apkFile.delete()
+        throw e
+    }
 
     try {
         @Suppress("DEPRECATION")
@@ -74,11 +83,35 @@ private const val INSPECT_FLAGS =
         PackageManager.GET_SERVICES or
         PackageManager.GET_RECEIVERS
 
+/** Refuse to stage anything larger than this — well above any real APK. */
+private const val MAX_APK_BYTES = 500L * 1024 * 1024
+
+/** Cap on bytes read from a single dex during the tracker scan, so a crafted
+ *  archive that decompresses enormously ("zip bomb") can't spin it forever.
+ *  Real dex files are far smaller. */
+private const val MAX_DEX_SCAN_BYTES = 200L * 1024 * 1024
+
+/** Streaming copy that aborts once [limit] bytes have been read. */
+private fun InputStream.copyUpTo(out: OutputStream, limit: Long) {
+    val buffer = ByteArray(1 shl 16)
+    var total = 0L
+    while (true) {
+        val read = read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > limit) throw IllegalStateException("That file is too large to analyze")
+        out.write(buffer, 0, read)
+    }
+}
+
 private fun buildMetadata(info: PackageInfo, label: String, apkFile: File): AppMetadata {
     val pm = AppReviewerRuntime.appContext.packageManager
     val appInfo = info.applicationInfo
     val flags = appInfo?.flags ?: 0
-    val footprint = footprintOf(apkFile)
+    // A corrupt or hostile archive shouldn't sink the whole scan — degrade to an
+    // empty footprint and keep the manifest-level findings.
+    val footprint = runCatching { footprintOf(apkFile) }
+        .getOrDefault(ApkFootprint(apkFile.length().coerceAtLeast(0), 0, emptyList(), emptyList()))
 
     return AppMetadata(
         sourceType = SourceType.APK,
@@ -156,9 +189,12 @@ private fun scanForTrackers(zip: ZipFile): List<String> {
         zip.getInputStream(entry).use { input ->
             val buffer = ByteArray(1 shl 16)
             var carry = ByteArray(0)
+            var scanned = 0L
             while (pending.isNotEmpty()) {
                 val read = input.read(buffer)
                 if (read <= 0) break
+                scanned += read
+                if (scanned > MAX_DEX_SCAN_BYTES) break
                 val window = carry + buffer.copyOf(read)
                 val iterator = pending.iterator()
                 while (iterator.hasNext()) {

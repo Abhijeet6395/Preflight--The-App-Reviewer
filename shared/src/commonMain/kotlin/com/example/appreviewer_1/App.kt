@@ -26,6 +26,7 @@ import com.example.appreviewer_1.ui.reviewer.ReviewerViewModel
 import com.example.appreviewer_1.ui.reviewer.Screen
 import com.example.appreviewer_1.ui.screens.AnalyzingScreen
 import com.example.appreviewer_1.ui.screens.HomeScreen
+import com.example.appreviewer_1.ui.screens.PrivacyScreen
 import com.example.appreviewer_1.ui.screens.ReportScreen
 import com.example.appreviewer_1.ui.theme.AppReviewerTheme
 
@@ -63,6 +64,7 @@ fun App() {
                 ) { screen ->
                     when (screen) {
                         Screen.HOME -> HomeScreen(state.history, viewModel::onIntent)
+                        Screen.PRIVACY -> PrivacyScreen(viewModel::onIntent)
                         Screen.ANALYZING -> AnalyzingScreen(state.targetLabel, state.stages)
                         Screen.REPORT -> state.report?.let { report ->
                             ReportScreen(

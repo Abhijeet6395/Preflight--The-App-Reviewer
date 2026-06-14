@@ -8,7 +8,7 @@ import com.example.appreviewer_1.mvi.UiIntent
 import com.example.appreviewer_1.mvi.UiState
 import com.example.appreviewer_1.platform.PickedApk
 
-enum class Screen { HOME, ANALYZING, REPORT }
+enum class Screen { HOME, ANALYZING, REPORT, PRIVACY }
 
 enum class StageStatus { PENDING, RUNNING, DONE }
 
@@ -25,6 +25,7 @@ sealed interface ReviewerIntent : UiIntent {
     data object AnalyzeSelf : ReviewerIntent
     data class OpenHistoryEntry(val id: Long) : ReviewerIntent
     data object ShareReport : ReviewerIntent
+    data object OpenPrivacy : ReviewerIntent
     data object BackToHome : ReviewerIntent
 }
 

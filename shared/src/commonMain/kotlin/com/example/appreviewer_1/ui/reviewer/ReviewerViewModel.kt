@@ -51,6 +51,7 @@ class ReviewerViewModel(
             is ReviewerIntent.OpenHistoryEntry -> openHistoryEntry(intent.id)
             ReviewerIntent.ShareReport ->
                 currentState.report?.let { shareText(MarkdownExporter.export(it)) }
+            ReviewerIntent.OpenPrivacy -> setState { copy(screen = Screen.PRIVACY) }
             ReviewerIntent.BackToHome -> {
                 analysisJob?.cancel()
                 setState { ReviewerState(history = history) }

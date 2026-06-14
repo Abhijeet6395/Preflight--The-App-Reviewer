@@ -218,7 +218,14 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(16.dp))
+        StaggerIn(6) {
+            TextButton(onClick = { onIntent(ReviewerIntent.OpenPrivacy) }) {
+                Text("Privacy", color = Slate, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
     }
 }
 
