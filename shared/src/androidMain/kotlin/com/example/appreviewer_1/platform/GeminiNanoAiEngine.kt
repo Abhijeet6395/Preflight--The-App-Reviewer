@@ -1,14 +1,18 @@
 package com.example.appreviewer_1.platform
 
 import com.example.appreviewer_1.domain.ai.AiEngine
+import com.example.appreviewer_1.domain.ai.PromptBuilder
 import com.example.appreviewer_1.domain.ai.RuleBasedAiEngine
+import com.example.appreviewer_1.domain.ai.VerdictSanitizer
 import com.example.appreviewer_1.domain.ai.topPriorities
 import com.example.appreviewer_1.domain.model.AiInsight
 import com.example.appreviewer_1.domain.model.AppMetadata
 import com.example.appreviewer_1.domain.model.Finding
-import com.example.appreviewer_1.domain.model.Severity
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.TextPart
+import com.google.mlkit.genai.prompt.generateContentRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,9 +21,17 @@ import kotlinx.coroutines.launch
 /**
  * Gemini Nano via the ML Kit GenAI Prompt API — fully on-device, no API key.
  *
- * Nano only ships on supported devices (Pixel 9+, recent Galaxy S, etc.), so
- * every path that can fail falls back to [RuleBasedAiEngine]; the report
- * labels which engine actually produced the insight.
+ * The prompt is built by the shared [PromptBuilder] so it's app-specific and
+ * testable. There are three layers of control around the model:
+ *  1. the app-aware prompt (PromptBuilder),
+ *  2. generation config — low temperature + token cap for a tight, consistent
+ *     reviewer verdict,
+ *  3. output guardrails — the result is sanitized to plain prose; a blank/garbled
+ *     result triggers one stricter retry, then the rule-based engine.
+ *
+ * Nano only ships on supported devices (Pixel 9+, recent Galaxy S, etc.), so every
+ * path that can fail falls back to [RuleBasedAiEngine]; the report labels which
+ * engine actually produced the insight.
  */
 class GeminiNanoAiEngine(
     private val fallback: AiEngine = RuleBasedAiEngine(),
@@ -50,14 +62,19 @@ class GeminiNanoAiEngine(
                 else -> return fallback.generateInsight(metadata, findings)
             }
 
-            val response = model.generateContent(buildPrompt(metadata, findings))
-            val text = response.candidates.firstOrNull()?.text?.trim()
-            if (text.isNullOrBlank()) {
+            val prompt = PromptBuilder.build(metadata, findings)
+
+            // First pass at low temperature; on a blank/garbled result, one stricter
+            // retry; if that still fails, fall through to the rule-based engine.
+            val summary = generate(model, prompt, temperature = 0.3f)
+                ?: generate(model, "$prompt\n\n$STRICT_REMINDER", temperature = 0.1f)
+
+            if (summary == null) {
                 fallback.generateInsight(metadata, findings)
             } else {
                 AiInsight(
                     engineName = displayName,
-                    summary = text,
+                    summary = summary,
                     priorities = topPriorities(findings),
                 )
             }
@@ -66,31 +83,24 @@ class GeminiNanoAiEngine(
         }
     }
 
-    private fun buildPrompt(metadata: AppMetadata, findings: List<Finding>): String {
-        val actionable = findings.filter { it.severity != Severity.INFO }
-        return buildString {
-            appendLine(
-                "You are an experienced Google Play app reviewer. Based on this " +
-                    "static-analysis result, write a 2-3 sentence verdict for the " +
-                    "developer: is the app ready to submit, what is the overall risk, " +
-                    "and what matters most. Plain text only, no markdown, no lists."
-            )
-            appendLine()
-            appendLine("App: ${metadata.appName ?: metadata.sourceLabel}")
-            metadata.targetSdk?.let { appendLine("Targets API $it") }
-            appendLine("Requests ${metadata.permissions.size} permissions")
-            if (metadata.trackers.isNotEmpty()) {
-                appendLine("Bundled third-party SDKs: ${metadata.trackers.joinToString()}")
-            }
-            appendLine()
-            appendLine("Findings:")
-            if (actionable.isEmpty()) {
-                appendLine("- none, all static checks passed")
-            } else {
-                actionable.forEach {
-                    appendLine("- [${it.severity.label}] ${it.title}")
-                }
-            }
+    private suspend fun generate(
+        model: GenerativeModel,
+        prompt: String,
+        temperature: Float,
+    ): String? {
+        val request = generateContentRequest(TextPart(prompt)) {
+            this.temperature = temperature
+            topK = TOP_K
+            maxOutputTokens = MAX_OUTPUT_TOKENS
         }
+        val raw = model.generateContent(request).candidates.firstOrNull()?.text
+        return VerdictSanitizer.clean(raw)
+    }
+
+    private companion object {
+        const val TOP_K = 40
+        const val MAX_OUTPUT_TOKENS = 256
+        const val STRICT_REMINDER =
+            "Reply with 2-3 sentences of plain prose only. No markdown, no lists, no headings."
     }
 }
