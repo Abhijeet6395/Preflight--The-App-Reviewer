@@ -5,6 +5,11 @@
 xcuserdata
 !src/**/build/
 local.properties
+
+# Signing — never commit the upload key or its credentials
+keystore.properties
+*.jks
+*.keystore
 .idea
 .DS_Store
 captures
