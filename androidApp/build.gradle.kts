@@ -21,7 +21,6 @@ dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
 
-// Load signing credentials from the gitignored keystore.properties (absent on CI / fresh clones).
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
